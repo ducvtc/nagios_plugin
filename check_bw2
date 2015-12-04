@@ -1,0 +1,133 @@
+#!/bin/bash
+
+print_usage() {
+  echo "Usage: ./check_bw -H Address  -p port_number -i inbound_down_percent -o outbound_down_percent -W wait_time"
+  echo "  ./$SCRIPTNAME -H ADDRESS"
+  echo "  ./$SCRIPTNAME -p STRING"
+  echo "  ./$SCRIPTNAME -i INTEGER"
+  echo "  ./$SCRIPTNAME -o INTEGER"
+  echo "  ./$SCRIPTNAME -W INTEGER"
+  echo "  ./$SCRIPTNAME -h"
+  echo "  ./$SCRIPTNAME -V"
+  echo "Example: ./check_bw -H 10.255.0.251 -p g0/2  -i 50 -o 50 -W 600"
+}
+
+print_version() {
+  echo "check_bw2 version 1.0"
+  echo "*****NOTE*****"
+  echo "NO WARRANTY"
+  echo "LICENSE: GPLv3"
+  echo "Written by minhduc.tran[at]vtc.vn"
+}
+
+print_help() {
+  print_version
+  print_usage
+}
+
+COMMUNITY="xxxx"
+#HOSTNAME="localhost"
+
+NORMAL=0
+WARNING=1
+CRITICAL=2
+UNKNOWN=3
+
+PATHLOG=/usr/local/nagios/var
+while getopts H:p:i:o:W:hV OPT
+do
+	case "$OPT" in
+		H) HOSTNAME="$OPTARG" ;;
+		p) PORTNo="$OPTARG"	;;
+		i) INDOWN="$OPTARG" ;;
+		o) OUTDOWN="$OPTARG" ;;
+		W) WAIT="$OPTARG" ;;
+		h) print_help
+			exit "$UNKNOWN" ;;
+		V) print_version
+			exit "$UNKNOWN" ;;
+	esac
+done
+
+fname=$(echo logio_${HOSTNAME}_${PORTNo})
+logfile=$PATHLOG/$fname
+
+ifoid=`snmpwalk -v 2c -c $COMMUNITY $HOSTNAME IF-MIB::ifDescr | grep "$PORTNo" | awk -F '[{. }]'  '{print $2}'`
+bitout2=`snmpwalk -v 2c -c $COMMUNITY $HOSTNAME IF-MIB::ifOutOctets.$ifoid | awk -F '[{:}]' '{ print $4 }'` 
+bitin2=`snmpwalk -v 2c -c $COMMUNITY $HOSTNAME IF-MIB::ifInOctets.$ifoid | awk -F '[{:}]' '{ print $4 }'`
+time2=`date +%s`
+#echo "bitout2=$bitout2"
+#echo "bitin2=$bitin2"
+#echo "time2=$time2"
+
+if [ -f "$logfile" ] 
+then
+	#Lay thong tin tu logfile neu co	
+	time1=`cat $logfile | awk '{print $1}'`
+	bitout1=`cat $logfile | awk '{print $2}'`
+	bitin1=`cat $logfile | awk '{print $3}'`
+	bwout1=`cat $logfile | awk '{print $4}'` #Bang thong outbound lan truoc
+	bwin1=`cat $logfile | awk '{print $5}'` #Bang thong inbound lan truoc
+	status1=`cat $logfile | awk '{print $6}'` #Trang thai canh bao lan truoc
+	lastwarn=`cat $logfile | awk '{print $7}'` #Thoi gian canh bao lan truoc
+	#echo "time1=$time1"
+	#echo "bitout1=$bitout1"
+	#echo "bitin1=$bitin1"
+	#echo "bwout1=$bwout1"
+	#echo "bwin1=$bwin1"
+	#echo "status1=$status1"
+	#echo "lastwarn=$lastwarn"
+	
+	#Tinh bang thong
+	timediff=$(( $time2 - $time1 ))
+	outdiff=$(( $bitout2 - $bitout1 ))
+	outdiff=`echo ${outdiff#-}`
+	indiff=$(( $bitin2 - $bitin1 ))
+	indiff=`echo ${indiff#-}`	
+	bwout2=`expr $outdiff \* 8 / $timediff`
+	bwin2=`expr $indiff \* 8 / $timediff`
+	let fromlast=time2-lastwarn #Thoi gian tu lan warning truoc
+	#echo "timediff=$timediff"
+	#echo "outdiff=$outdiff"
+	#echo "indiff=$indiff"
+	#echo "bwout2=$bwout2"
+	#echo "bwin2=$bwin2"
+	#echo "fromlast=$fromlast"
+	
+	if [ $fromlast -le $WAIT ] && [ $lastwarn -gt 0 ] #Neu thoi gian chua qua WAIT va da co canh bao truoc do thi giu nguyen canh bao
+	then
+		status2=$(($status1))
+		#echo "status2=$status2"
+		echo "$time2 $bitout2 $bitin2 $bwout2 $bwin2 $status2 $lastwarn" > "$logfile"
+	elif [[ $bwin1 -gt 0 ]] && [[ $bwout1 -gt 0 ]] 
+	then
+		bwoutdiff=$(( $bwout2 - $bwout1 ))
+		bwindiff=$(( $bwin2 - $bwin1 ))
+		bwoutdiff=`echo ${bwoutdiff#-}`
+		bwindiff=`echo ${bwindiff#-}`
+		outrate=`expr $bwoutdiff \* 100 / $bwout1`	
+		inrate=`expr $bwindiff \* 100 / $bwin1`	
+		#echo "bwoutdiff=$bwoutdiff"
+		#echo "bwindiff=$bwindiff"
+		#echo "outrate=$outrate"
+		#echo "inrate=$inrate"
+		if ([[ $outrate -ge $OUTDOWN ]] && [ $bwout2 -le $bwout1 ]) || ([[ $inrate -ge $INDOWN ]] && [ $bwin2 -le $bwin1 ])
+		then
+			status2=2
+			lastwarn=$(($time2))
+			echo "Bang thong vua bi sut rat nhieu"
+			echo "$time2 $bitout2 $bitin2 $bwout2 $bwin2 $status2 $lastwarn" > "$logfile"
+		else
+			status2=0
+			echo "$time2 $bitout2 $bitin2 $bwout2 $bwin2 $status2 $lastwarn" > "$logfile"
+		fi
+	else	
+		status2=0
+		echo "$time2 $bitout2 $bitin2 $bwout2 $bwin2 $status2 $lastwarn" > "$logfile"
+	fi
+else
+	#Neu logfile khong ton tai thi tao ra no	
+	echo "Create the logfile"
+	echo "$time2 $bitout2 $bitin2 -1 -1 0 0" > "$logfile"
+fi
+

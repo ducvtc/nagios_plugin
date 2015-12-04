@@ -1,0 +1,20 @@
+#!/bin/bash
+
+while getopts H:p:i:o:W: OPT
+do
+	case "$OPT" in
+		H) HOSTNAME="$OPTARG" ;;
+		p) PORTNo="$OPTARG"	;;
+		i) INDOWN="$OPTARG" ;;
+		o) OUTDOWN="$OPTARG" ;;
+		W) WAIT="$OPTARG" ;;
+	esac
+done
+
+PATHLOG=/usr/local/nagios/var
+fname=$(echo logio_${HOSTNAME}_${PORTNo})
+logfile=$PATHLOG/$fname
+
+/usr/local/nagios/libexec/check_bw2 -H $HOSTNAME -p $PORTNo -i $INDOWN -o $OUTDOWN -W $WAIT
+STATUS=`cat $logfile | awk '{print $6}'`
+exit $STATUS
